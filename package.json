@@ -1,0 +1,51 @@
+{
+  "name": "refreshy",
+  "productName": "Refreshy",
+  "version": "0.1.3",
+  "description": "Back up your apps and AppData to an external drive, reinstall Windows without losing a thing, and restore everything in one click.",
+  "author": "inetixus",
+  "license": "MIT",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable",
+    "test": "node test/logic.test.js && node test/ui-smoke.js"
+  },
+  "devDependencies": {
+    "@fluentui/svg-icons": "^1.1.347",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "jsdom": "^31.0.1"
+  },
+  "dependencies": {
+    "simple-icons": "^14.0.0"
+  },
+  "build": {
+    "appId": "com.inetixus.refreshy",
+    "productName": "Refreshy",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Refreshy-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Refreshy-Portable-${version}.${ext}"
+    }
+  }
+}

@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'" />
+  <title>Refreshy</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="titlebar" role="menubar">
+    <div class="titlebar-brand">
+      <img class="brand-mark" src="icons/refreshy-mark.svg" alt="" />
+      <span class="brand-name">Refreshy</span>
+    </div>
+    <div class="titlebar-drag"></div>
+    <div class="titlebar-buttons" id="customWindowButtons" hidden>
+      <button class="wbtn" id="btnMin" aria-label="Minimize"></button>
+      <button class="wbtn" id="btnMax" aria-label="Maximize"></button>
+      <button class="wbtn close" id="btnClose" aria-label="Close"></button>
+    </div>
+  </div>
+
+  <main id="app">
+    <section class="view active" id="view-home">
+      <div class="hero">
+        <img class="hero-mark" src="icons/refreshy-mark.svg" alt="Refreshy" />
+        <h1>Reinstall Windows.<br />Keep everything.</h1>
+        <p class="subtitle">Refreshy saves your apps and app data to an external drive, then puts everything back after a clean install &mdash; apps install themselves in one go.</p>
+        <p class="version-stamp" id="versionStamp"></p>
+      </div>
+      <div class="action-grid">
+        <button class="action-card" id="btnStartBackup">
+          <span class="action-icon"><i class="icon i-shield"></i></span>
+          <span class="action-text">
+            <span class="action-title">Back up this PC</span>
+            <span class="action-sub">Save your app list and app data to an external drive</span>
+          </span>
+          <i class="icon i-chevron-r action-go"></i>
+        </button>
+        <button class="action-card" id="btnStartRestore">
+          <span class="action-icon"><i class="icon i-restore"></i></span>
+          <span class="action-text">
+            <span class="action-title">Restore a backup</span>
+            <span class="action-sub">Reinstall all your apps and bring your data back</span>
+          </span>
+          <i class="icon i-chevron-r action-go"></i>
+        </button>
+      </div>
+    </section>
+
+    <section class="view" id="view-os">
+      <div class="page-head">
+        <button class="back-btn" data-nav="home" aria-label="Back"><i class="icon i-arrow-l"></i></button>
+        <div>
+          <h2>Which OS will you install next?</h2>
+          <p class="page-sub">This decides what's worth saving and how apps can be reinstalled. You can change it later.</p>
+        </div>
+      </div>
+      <div class="os-grid" id="osGrid"></div>
+      <div class="callout info" id="osDescription" hidden>
+        <i class="icon i-info"></i><span id="osDescriptionText"></span>
+      </div>
+      <div class="page-actions">
+        <button class="btn primary" id="osContinue" disabled>Continue</button>
+      </div>
+    </section>
+
+    <section class="view" id="view-dest">
+      <div class="page-head">
+        <button class="back-btn" data-nav="os" aria-label="Back"><i class="icon i-arrow-l"></i></button>
+        <div>
+          <h2>Where should the backup go?</h2>
+          <p class="page-sub">Choose a drive with enough free space. An external drive is safest.</p>
+        </div>
+      </div>
+      <div class="drive-list" id="driveList">
+        <div class="skeleton-row"></div>
+        <div class="skeleton-row"></div>
+      </div>
+      <div class="page-actions split">
+        <button class="btn subtle" id="btnPickFolder"><i class="icon i-folder"></i>Pick another folder&hellip;</button>
+        <button class="btn primary" id="destContinue" disabled>Continue</button>
+      </div>
+    </section>
+
+    <section class="view" id="view-content">
+      <div class="page-head">
+        <button class="back-btn" data-nav="dest" aria-label="Back"><i class="icon i-arrow-l"></i></button>
+        <div>
+          <h2>What should Refreshy save?</h2>
+          <p class="page-sub">Everything selected below is copied before you wipe Windows.</p>
+        </div>
+      </div>
+      <div class="card">
+        <label class="row toggle-row" id="rowApps">
+          <span class="row-icon"><i class="icon i-apps"></i></span>
+          <span class="row-text">
+            <span class="row-title">App list</span>
+            <span class="row-sub" id="appsHint">Captured with winget so apps reinstall automatically</span>
+          </span>
+          <span class="switch on" id="swApps" role="switch" aria-checked="true" tabindex="0"></span>
+        </label>
+        <div class="divider"></div>
+        <div id="dataItems"></div>
+      </div>
+      <div class="callout info">
+        <i class="icon i-info"></i><span>Caches, temp files and crash dumps are skipped automatically to keep the backup small.</span>
+      </div>
+      <div class="page-actions">
+        <button class="btn primary" id="contentContinue">Continue</button>
+      </div>
+    </section>
+
+    <section class="view" id="view-runbackup">
+      <div class="progress-stage">
+        <div class="ring" id="backupRing">
+          <svg viewBox="0 0 120 120">
+            <circle class="ring-bg" cx="60" cy="60" r="52"/>
+            <circle class="ring-fg" id="backupRingFg" cx="60" cy="60" r="52"/>
+          </svg>
+          <div class="ring-label"><span id="backupPercent">0%</span></div>
+        </div>
+        <h2 id="backupTitle">Backing up&hellip;</h2>
+        <p class="page-sub" id="backupTask">Preparing&hellip;</p>
+        <div class="stat-row">
+          <div class="stat"><span id="statFiles">0</span><label>files</label></div>
+          <div class="stat"><span id="statSize">0 MB</span><label>saved</label></div>
+          <div class="stat"><span id="statSkipped">0</span><label>skipped</label></div>
+        </div>
+        <div class="log" id="backupLog" hidden></div>
+        <div class="page-actions center">
+          <button class="btn subtle danger" id="btnCancelBackup">Cancel</button>
+          <button class="btn subtle" id="btnShowLog" hidden>Show details</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-donebackup">
+      <div class="progress-stage">
+        <div class="big-check ok"><i class="icon i-check"></i></div>
+        <h2>Backup complete</h2>
+        <p class="page-sub" id="doneBackupText"></p>
+        <div class="page-actions center">
+          <button class="btn subtle" id="btnOpenBackup"><i class="icon i-folder-open"></i>Open folder</button>
+          <button class="btn primary" id="btnDoneHome">Done</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-restorepick">
+      <div class="progress-stage slim">
+        <h2>Restore your backup</h2>
+        <p class="page-sub">Choose the <b>Refreshy&mdash;&hellip;</b> folder from your external drive. It contains <b>manifest.json</b>, <b>apps</b> and <b>data</b>.</p>
+        <button class="btn primary big" id="btnChooseBackup"><i class="icon i-folder-open"></i>Choose backup folder&hellip;</button>
+        <p class="hint" id="restorePickHint"></p>
+      </div>
+    </section>
+
+    <section class="view" id="view-restorereview">
+      <div class="page-head">
+        <button class="back-btn" data-nav="restorepick" aria-label="Back"><i class="icon i-arrow-l"></i></button>
+        <div>
+          <h2>Ready to restore</h2>
+          <p class="page-sub" id="restoreFromText"></p>
+        </div>
+      </div>
+      <div class="callout warning" id="restoreWarning" hidden>
+        <i class="icon i-warning"></i><span id="restoreWarningText"></span>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="row-icon"><i class="icon i-apps"></i></span>
+          <span class="row-text"><span class="row-title">Apps</span>
+            <span class="row-sub" id="appsCountText"></span></span>
+          <button class="btn subtle small" id="btnSelectAllApps">Select all</button>
+        </div>
+        <div class="chip-list" id="packagesList"></div>
+        <div class="manual-block" id="manualAppsBlock" hidden>
+          <p class="manual-note" id="manualAppsNote" hidden></p>
+          <div class="chip-list manual" id="manualChips"></div>
+          <div class="manual-actions">
+            <button class="btn subtle small" id="btnMatchApps"><i class="icon i-refresh"></i>Auto-match with winget</button>
+            <button class="btn subtle small" id="btnAiResolve"><i class="icon i-rocket"></i>Find installers with AI</button>
+            <span class="manual-hint" id="manualHint"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="row-icon"><i class="icon i-data"></i></span>
+          <span class="row-text"><span class="row-title">App data</span>
+            <span class="row-sub" id="dataCountText"></span></span>
+        </div>
+        <div id="restoreDataItems"></div>
+      </div>
+
+      <div class="page-actions">
+        <button class="btn primary" id="btnRestoreAll"><i class="icon i-rocket"></i>Restore everything</button>
+      </div>
+    </section>
+
+    <section class="view" id="view-restorerun">
+      <div class="progress-stage">
+        <div class="phase-row" id="phaseRow">
+          <div class="phase" id="phaseApps"><i class="icon i-apps"></i><span>Install apps</span></div>
+          <div class="phase-line"></div>
+          <div class="phase" id="phaseData"><i class="icon i-data"></i><span>Import data</span></div>
+        </div>
+        <h2 id="restoreRunTitle">Installing your apps&hellip;</h2>
+        <p class="page-sub" id="restoreRunSub">Windows may ask for permission (UAC) so installers can run &mdash; that's normal.</p>
+        <div class="log live" id="restoreLog"></div>
+        <div class="page-actions center" id="restoreRunActions">
+          <button class="btn subtle danger" id="btnCancelInstall">Cancel</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-donerestore">
+      <div class="progress-stage">
+        <div class="big-check ok" id="doneRestoreIcon"><i class="icon i-check"></i></div>
+        <h2>You're back</h2>
+        <p class="page-sub" id="doneRestoreText"></p>
+        <div class="page-actions center">
+          <button class="btn primary" id="btnDoneHome2">Done</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="overlay" id="keysOverlay" hidden>
+    <div class="modal">
+      <h3>Connect installer search</h3>
+      <p class="modal-note">Refreshy uses your own <b>Mistral AI</b> key to reason about official download pages and a <b>Firecrawl</b> key to read them. Keys are stored only on this PC and only sent to these two APIs.</p>
+      <label class="field"><span>Mistral API key</span>
+        <input id="keyMistral" type="password" placeholder="MISTRAL-..." spellcheck="false" />
+      </label>
+      <label class="field"><span>Firecrawl API key</span>
+        <input id="keyFirecrawl" type="password" placeholder="fc-..." spellcheck="false" />
+      </label>
+      <p class="hint">Already saved keys stay as-is if you leave a field empty.</p>
+      <div class="page-actions">
+        <button class="btn subtle" id="keysCancel">Cancel</button>
+        <button class="btn primary" id="keysSave">Save &amp; find installers</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,310 @@
+'use strict';
+
+const { app, BrowserWindow, ipcMain, dialog, nativeTheme, shell } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const { wingetSearch, parseWingetSearchTable } = require('./lib/ps');
+const { resolveInstallerForApp } = require('./lib/ai');
+const { safeFileName, silentArgsFor, downloadFile } = require('./lib/installers');
+const { listDrives, isWingetAvailable, getMachineInfo } = require('./lib/ps');
+const { backup: doBackup, cancelBackup } = require('./lib/backup');
+const {
+  readBackup, verifyBackupPath, writeInstallerScript, startInstaller,
+  restoreData, targetOsWarning, pickRestoreDefaults
+} = require('./lib/restore');
+
+let win = null;
+let currentInstallChild = null;
+
+function createWindow() {
+  const isWin = process.platform === 'win32';
+  win = new BrowserWindow({
+    width: 1120,
+    height: 760,
+    minWidth: 860,
+    minHeight: 600,
+    show: false,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: isWin
+      ? { symbolColor: nativeTheme.shouldUseDarkColors ? '#ffffff' : '#1a1a1a', height: 44 }
+      : false,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#202020' : '#f3f3f3',
+    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      spellcheck: false
+    }
+  });
+  nativeTheme.on('updated', () => {
+    if (win && !win.isDestroyed()) {
+      win.setTitleBarOverlay({
+        symbolColor: nativeTheme.shouldUseDarkColors ? '#ffffff' : '#1a1a1a'
+      }).catch(() => {});
+    }
+  });
+  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  win.once('ready-to-show', () => win.show());
+}
+
+app.whenReady().then(() => {
+  createWindow();
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
+
+app.on('window-all-closed', () => {
+  if (currentInstallChild) currentInstallChild.kill();
+  app.quit();
+});
+
+function emitProgress(channel, payload) {
+  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+}
+
+ipcMain.handle('app:getTheme', () => nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
+
+ipcMain.handle('app:getPlatform', () => ({ platform: process.platform }));
+ipcMain.handle('app:getVersion', () => app.getVersion());
+
+ipcMain.on('app:minimize', () => win && win.minimize());
+ipcMain.on('app:maximize', () => win && (win.isMaximized() ? win.unmaximize() : win.maximize()));
+ipcMain.on('app:close', () => win && win.close());
+
+ipcMain.handle('app:getMachineInfo', async () => {
+  const info = await getMachineInfo();
+  const winget = await isWingetAvailable().catch(() => false);
+  return { ...info, wingetAvailable: winget };
+});
+
+ipcMain.handle('drives:list', async () => {
+  try {
+    return { ok: true, drives: await listDrives() };
+  } catch (err) {
+    return { ok: false, error: err.message, drives: [] };
+  }
+});
+
+ipcMain.handle('backup:dataItems', async () => {
+  const items = require('./lib/paths').dataItems();
+  return items;
+});
+
+ipcMain.handle('backup:start', async (_e, options) => {
+  try {
+    const result = await doBackup(options, (p) => emitProgress('backup:progress', p));
+    emitProgress('backup:progress', {
+      phase: 'done',
+      destination: result.destination,
+      manifest: {
+        apps: result.manifest.apps,
+        totalBytes: result.manifest.totalBytes
+      },
+      _final: result
+    });
+    return { ok: true, ...result };
+  } catch (err) {
+    return { ok: false, cancelled: err.message === 'cancelled', error: err.message };
+  }
+});
+
+ipcMain.on('backup:cancel', () => cancelBackup());
+
+ipcMain.handle('restore:selectBackup', async () => {
+  const res = await dialog.showOpenDialog(win, {
+    title: 'Choose your Refreshy backup',
+    properties: ['openDirectory'],
+    buttonLabel: 'Use this backup'
+  });
+  if (res.canceled || !res.filePaths.length) return { ok: false, cancelled: true };
+  const p = res.filePaths[0];
+  if (!(await verifyBackupPath(p))) {
+    return { ok: false, error: 'No manifest.json found in that folder. Pick the top-level Refreshy-... folder on your external drive.' };
+  }
+  try {
+    const info = await readBackup(p);
+    const warning = targetOsWarning(info.manifest, process.platform);
+    const defaults = await pickRestoreDefaults(info, process.platform);
+    return {
+      ok: true,
+      backupPath: p,
+      manifest: info.manifest,
+      packages: defaults.packages,
+      manualApps: info.manualApps,
+      dataEntries: defaults.dataEntries,
+      warning,
+      currentOs: await require('./lib/restore').currentOsLabel()
+    };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('restore:generateInstaller', async (_e, { backupPath, packages, installers, manualApps }) => {
+  try {
+    const chosen = packages.filter((p) => p.selected && p.id);
+    if (!chosen.length && !(installers || []).length) return { ok: false, error: 'No apps selected.' };
+    const fetched = (installers || []).filter((i) => !i.failed);
+    const file = await writeInstallerScript(backupPath, chosen, process.platform, {
+      installers: fetched,
+      manualApps: manualApps || []
+    });
+    return { ok: true, file, count: chosen.length + fetched.length };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+function configPath() { return path.join(app.getPath('userData'), 'refreshy-config.json'); }
+function readConfig() {
+  try { return JSON.parse(fs.readFileSync(configPath(), 'utf8')); } catch { return {}; }
+}
+function writeConfig(cfg) {
+  fs.mkdirSync(path.dirname(configPath()), { recursive: true });
+  fs.writeFileSync(configPath(), JSON.stringify(cfg, null, 2));
+}
+
+ipcMain.handle('settings:get', () => {
+  const c = readConfig();
+  return { mistralKeySet: !!c.mistralKey, firecrawlKeySet: !!c.firecrawlKey, ready: !!(c.mistralKey && c.firecrawlKey) };
+});
+
+ipcMain.handle('settings:set', (_e, { mistralKey, firecrawlKey }) => {
+  try {
+    const c = readConfig();
+    if (mistralKey != null) c.mistralKey = String(mistralKey).trim();
+    if (firecrawlKey != null) c.firecrawlKey = String(firecrawlKey).trim();
+    writeConfig(c);
+    return { ok: true, ready: !!(c.mistralKey && c.firecrawlKey) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('winget:matchApps', async (_e, manualApps) => {
+  if (!process || process.platform !== 'win32') return { ok: false, error: 'winget is only available on Windows' };
+  const matches = [];
+  for (const app of manualApps || []) {
+    emitProgress('ai:progress', { phase: 'matching', app: app.name });
+    const out = await wingetSearch(app.name);
+    const rows = parseWingetSearchTable(out);
+    const exact = rows.find((r) => r.name.toLowerCase() === String(app.name).toLowerCase());
+    matches.push({ name: app.name, id: exact ? exact.id : (rows.length ? rows[0].id : null) });
+  }
+  return { ok: true, matches };
+});
+
+ipcMain.handle('ai:resolveInstallers', async (_e, { backupPath, apps }) => {
+  const cfg = readConfig();
+  if (!cfg.mistralKey || !cfg.firecrawlKey) {
+    return { ok: false, error: 'missing-keys' };
+  }
+  const installersDir = path.join(backupPath, 'apps', 'installers');
+  fs.mkdirSync(installersDir, { recursive: true });
+  const resolved = [];
+  for (const app of apps || []) {
+    emitProgress('ai:progress', { phase: 'resolving', app: app.name });
+    try {
+      const r = await resolveInstallerForApp(
+        { mistralKey: cfg.mistralKey, firecrawlKey: cfg.firecrawlKey, model: cfg.mistralModel },
+        app
+      );
+      emitProgress('ai:progress', { phase: 'downloading', app: app.name, url: r.url });
+      const fileName = safeFileName(app, r.url);
+      const dest = path.join(installersDir, fileName);
+      const dl = await downloadFile(r.url, dest, (p) =>
+        emitProgress('ai:progress', { phase: 'download', app: app.name, received: p.received, total: p.total })
+      );
+      let host = null;
+      try { host = new URL(r.url).host; } catch { /* ignore */ }
+      resolved.push({
+        name: app.name,
+        file: fileName,
+        url: r.url,
+        host,
+        bytes: dl.bytes,
+        args: silentArgsFor(r.url),
+        failed: false
+      });
+      emitProgress('ai:progress', { phase: 'resolved', app: app.name, file: fileName, bytes: dl.bytes, url: r.url, host, ok: true });
+    } catch (err) {
+      resolved.push({ name: app.name, failed: true, error: err.message });
+      emitProgress('ai:progress', { phase: 'failed', app: app.name, error: err.message, ok: false });
+    }
+  }
+  return { ok: true, resolved, installers: resolved.filter((r) => !r.failed) };
+});
+
+ipcMain.on('restore:installAll', (_e, { backupPath, packages }) => {
+  const chosen = packages.filter((p) => p.selected && p.id);
+  emitProgress('install:progress', { phase: 'started', count: chosen.length });
+  currentInstallChild = startInstaller(
+    backupPath,
+    chosen,
+    (line) => emitProgress('install:progress', { phase: 'line', line }),
+    (code) => {
+      currentInstallChild = null;
+      emitProgress('install:progress', { phase: 'done', code });
+    }
+  );
+});
+
+ipcMain.on('restore:cancelInstall', () => {
+  if (currentInstallChild) currentInstallChild.kill();
+  currentInstallChild = null;
+  emitProgress('install:progress', { phase: 'cancelled' });
+});
+
+ipcMain.on('restore:importData', (_e, { backupPath, dataEntries }) => {
+  const chosen = dataEntries.filter((d) => d.selected && d.exists);
+  (async () => {
+    for (const entry of chosen) {
+      emitProgress('import:progress', { phase: 'started', label: entry.label });
+      try {
+        const res = await restoreData({ ...entry, fullPath: path.join(backupPath, entry.folder) });
+        emitProgress('import:progress', { phase: 'itemDone', label: entry.label, files: res.files, errors: res.errors.slice(0, 20) });
+      } catch (err) {
+        emitProgress('import:progress', { phase: 'itemDone', label: entry.label, files: 0, errors: [err.message] });
+      }
+    }
+    emitProgress('import:progress', { phase: 'done' });
+  })();
+});
+
+ipcMain.handle('restore:estimateSize', async (_e, entries) => {
+  const { dirSize } = require('./lib/backup');
+  const { buildMatchers } = require('./lib/backup');
+  const matchers = buildMatchers(require('./lib/paths').DEFAULT_EXCLUSIONS);
+  let total = 0;
+  const sizes = {};
+  for (const e of entries) {
+    if (!e.fullPath) continue;
+    const s = await dirSize(e.fullPath, matchers);
+    sizes[e.id] = s.bytes;
+    total += s.bytes;
+  }
+  return { total, sizes };
+});
+
+ipcMain.handle('shell:openPath', async (_e, p) => shell.openPath(p));
+ipcMain.handle('shell:showItemInFolder', (_e, p) => shell.showItemInFolder(p));
+ipcMain.handle('dialog:chooseDirectory', async (_e, opts = {}) => {
+  const res = await dialog.showOpenDialog(win, {
+    title: opts.title || 'Choose a folder',
+    properties: ['openDirectory'],
+    buttonLabel: opts.buttonLabel || 'Select',
+    defaultPath: opts.defaultPath
+  });
+  if (res.canceled || !res.filePaths.length) return null;
+  return res.filePaths[0];
+});
+
+app.on('web-contents-created', (_e, contents) => {
+  contents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+});
