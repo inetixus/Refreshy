@@ -100,6 +100,11 @@ copyTree(src, dest, matchers, progress, 'test').then(async () => {
   const sh = restore.linuxShellScript([{ id: 'org.mozilla.firefox' }], '/mnt/b', 'ubuntu');
   assert(sh.includes('flatpak install'), 'linux script uses flatpak');
 
+  const css = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'styles.css'), 'utf8');
+  assert(/\[hidden\]\s*\{\s*display:\s*none\s*!important/.test(css),
+    'CSS guard present: author display rules must not override the hidden attribute\n'
+    + '(a full-window .overlay with opacity:0 once swallowed every click)');
+
   console.log('ALL LOGIC TESTS PASSED');
   fs.rmSync(tmp, { recursive: true, force: true });
 }).catch((e) => { console.error('TEST FAILED', e); process.exit(1); });

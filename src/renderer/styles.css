@@ -1,3 +1,7 @@
+/* display rules above must never resurrect `hidden` elements (e.g. the
+   full-window .overlay was invisibly swallowing every click) */
+[hidden] { display: none !important; }
+
 :root {
   --accent: #4cc2ff;
   --accent-solid: #0078d4;
