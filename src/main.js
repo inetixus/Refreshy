@@ -24,7 +24,6 @@ function createWindow() {
     minWidth: 860,
     minHeight: 600,
     show: false,
-    frame: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: isWin
       ? { symbolColor: nativeTheme.shouldUseDarkColors ? '#ffffff' : '#1a1a1a', height: 44 }
