@@ -1,7 +1,7 @@
 {
   "name": "refreshy",
   "productName": "Refreshy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Back up your apps and AppData to an external drive, reinstall Windows without losing a thing, and restore everything in one click.",
   "author": "inetixus",
   "license": "MIT",

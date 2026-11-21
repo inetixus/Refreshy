@@ -17,6 +17,7 @@ const { document } = window;
 window.refreshy = {
   platform: async () => ({ platform: 'win32' }),
   theme: async () => ({ dark: 'dark' } && (await undefined, 'dark')),
+  version: async () => '0.0.0-test',
   machine: async () => ({ host: 'TEST-PC', platform: 'win32', wingetAvailable: true }),
   drives: async () => ({ ok: true, drives: [
     { path: 'E:\\', label: 'Backup drive', kind: 'removable', freeBytes: 64e9, totalBytes: 128e9, recommended: true },

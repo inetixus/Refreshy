@@ -48,6 +48,11 @@ const DATA_ICONS = {
 window.addEventListener('error', (e) => showFatal(e.error || e.message));
 window.addEventListener('unhandledrejection', (e) => showFatal(e.reason));
 
+if (typeof window.refreshy === 'undefined' || !window.refreshy) {
+  showFatal('Refreshy\u2019s internal bridge (preload) did not load \u2014 the UI cannot reach the app core. ' +
+    'Fix: delete the dist folder, then pull the latest code and rebuild (git pull && npm install && npm run dist).');
+}
+
 function showFatal(reason) {
   let el = document.getElementById('fatalError');
   if (!el) {
@@ -812,3 +817,9 @@ initTheme();
 initWindowButtons();
 initOsGrid();
 window.refreshy.platform().then((p) => { state.platform = p.platform; });
+if (window.refreshy.version) {
+  window.refreshy.version().then((v) => {
+    const el = $('versionStamp');
+    if (el) el.textContent = 'Refreshy v' + v + ' \u2014 if this is not the newest version, rebuild: git pull && npm run dist';
+  }).catch(() => {});
+}

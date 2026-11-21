@@ -69,6 +69,7 @@ function emitProgress(channel, payload) {
 ipcMain.handle('app:getTheme', () => nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
 
 ipcMain.handle('app:getPlatform', () => ({ platform: process.platform }));
+ipcMain.handle('app:getVersion', () => app.getVersion());
 
 ipcMain.on('app:minimize', () => win && win.minimize());
 ipcMain.on('app:maximize', () => win && (win.isMaximized() ? win.unmaximize() : win.maximize()));

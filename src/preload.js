@@ -7,6 +7,7 @@ const listeners = {};
 contextBridge.exposeInMainWorld('refreshy', {
   platform: () => ipcRenderer.invoke('app:getPlatform'),
   theme: () => ipcRenderer.invoke('app:getTheme'),
+  version: () => ipcRenderer.invoke('app:getVersion'),
   machine: () => ipcRenderer.invoke('app:getMachineInfo'),
   drives: () => ipcRenderer.invoke('drives:list'),
   dataItems: () => ipcRenderer.invoke('backup:dataItems'),

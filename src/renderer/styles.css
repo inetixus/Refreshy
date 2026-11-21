@@ -78,6 +78,14 @@ body {
 
 .brand-mark { width: 20px; height: 20px; }
 
+.version-stamp {
+  font-size: 12px;
+  color: var(--text-3);
+  opacity: 0.75;
+  margin-top: 10px;
+  user-select: text;
+}
+
 .brand-name {
   font-weight: 600;
   font-size: 13px;

@@ -33,6 +33,21 @@ Wipe the machine and install the OS you picked. Your external drive keeps the ba
 - **Apps**: Refreshy generates **one single installer** (`apps/Refreshy-Installer.ps1`) that installs every selected app in one automated run via winget, with a live log in the app. One app failing never blocks the rest; a summary tells you exactly what needs attention.
 - **Data**: copies settings and profiles back into your new user profile, skipping any file that already exists locally, and reports the results per folder.
 
+## Verify you're running the fresh build
+
+The app prints its version on the **home screen** (small line under the hero text, e.g. `Refreshy v0.1.1 ...`). If that line is missing or shows an old version, you are launching a stale exe. Rebuild from scratch:
+
+```powershell
+git pull
+del dist -Recurse -Force
+npm install
+npm run dist
+```
+
+Then launch `dist\win-unpacked\Refreshy.exe` (Win + R → paste the full path) — not an old shortcut pointing at a previous build.
+
+If buttons still do nothing on a fresh build, a red panel at the bottom of the window now shows the exact error (including a missing preload bridge). Copy that text when reporting.
+
 ## Run from source
 
 ```bash
