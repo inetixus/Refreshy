@@ -42,13 +42,27 @@ npm test         # engine logic tests
 npm run dist     # build Windows NSIS installer + portable exe (build on Windows)
 ```
 
+## Troubleshooting builds
+
+**`Cannot create symbolic link : A required privilege is not held by the client`** when running `npm run dist`: the winCodeSign helper archive contains symlinks, which non-elevated terminals cannot create. Run the build once from an **elevated** PowerShell (Right-click Start → Windows PowerShell (Admin)):
+
+```powershell
+npm run dist
+```
+
+Alternatively skip the signing/resource step (exe won't get the embedded icon):
+
+```powershell
+npx electron-builder --win nsis portable --publish never -c.win.signAndEditExecutable=false
+```
+
 To cross-build the unpacked Windows app from Linux:
 
 ```bash
 npx electron-builder --win --dir --config.win.signAndEditExecutable=false
 ```
 
-(NSIS/portable targets with embedded icons require building on Windows.)
+(NSIS/portable targets with embedded icons require building on Windows, or GitHub Actions.)
 
 ## Tech
 
