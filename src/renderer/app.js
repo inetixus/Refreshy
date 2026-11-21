@@ -43,6 +43,24 @@ const DATA_ICONS = {
   'videos': 'i-desktop', 'music': 'i-music', 'downloads': 'i-download'
 };
 
+/* ---------- fatal error surface ---------- */
+
+window.addEventListener('error', (e) => showFatal(e.error || e.message));
+window.addEventListener('unhandledrejection', (e) => showFatal(e.reason));
+
+function showFatal(reason) {
+  let el = document.getElementById('fatalError');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'fatalError';
+    el.style.cssText = 'position:fixed;bottom:20px;left:20px;right:20px;z-index:99;background:#5d1a1a;color:#fff;' +
+      'border:1px solid #ff99a4;border-radius:8px;padding:12px 16px;font-size:12.5px;line-height:1.5;max-height:40vh;overflow:auto;';
+    document.body.appendChild(el);
+  }
+  const msg = reason && reason.stack ? `${reason.message}\n${reason.stack.split('\n').slice(1, 4).join('\n')}` : String(reason);
+  el.textContent += (el.textContent ? '\n\n' : 'Something went wrong — please report this:\n') + msg;
+}
+
 /* ---------- helpers ---------- */
 
 function showView(name) {
@@ -305,9 +323,9 @@ function updateBackupProgress(p, log) {
   setRing(pct);
   $('backupPercent').textContent = Math.round(pct) + '%';
   $('backupTask').textContent = p.task || 'Finishing up…';
-  $('statFiles').textContent = p.files.toLocaleString();
+  $('statFiles').textContent = (p.files != null ? p.files : 0).toLocaleString();
   $('statSize').textContent = formatBytes(total);
-  $('statSkipped').textContent = p.skippedCount;
+  $('statSkipped').textContent = p.skippedCount || 0;
 
   if (p.phase === 'done' && p._final) {
     $('backupTitle').textContent = 'Backup complete';
@@ -449,10 +467,10 @@ function renderManualApps() {
   manuals.forEach((m) => {
     const chip = document.createElement('span');
     chip.className = 'chip';
-    const cls = m.status === 'downloaded' ? 'ok'
+    const cls = m.matchedId ? 'merged'
+      : m.status === 'downloaded' ? 'ok'
       : m.status === 'failed' ? 'fail'
-      : m.status === 'working' ? 'spin'
-      : m.matchedId ? 'merged' : '';
+      : m.status === 'working' ? 'spin' : '';
     const label = m.matchedId || m.name;
     const ver = m.version ? ` (v${m.version})` : '';
     chip.innerHTML = `<span class="chip-state ${cls}"></span>${escapeHtml(label)}${escapeHtml(ver)}`;

@@ -10,12 +10,13 @@
     "start": "electron .",
     "dist": "electron-builder --win",
     "dist:portable": "electron-builder --win portable",
-    "test": "node test/logic.test.js"
+    "test": "node test/logic.test.js && node test/ui-smoke.js"
   },
   "devDependencies": {
     "@fluentui/svg-icons": "^1.1.347",
     "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "jsdom": "^31.0.1"
   },
   "dependencies": {
     "simple-icons": "^14.0.0"
