@@ -2,7 +2,7 @@
   --accent: #4cc2ff;
   --accent-solid: #0078d4;
   --accent-soft: rgba(76, 194, 255, 0.14);
-  --bg: rgba(32, 32, 32, 0.30);
+  --bg: #242424;
   --surface: rgba(255, 255, 255, 0.052);
   --surface-hover: rgba(255, 255, 255, 0.085);
   --surface-active: rgba(255, 255, 255, 0.03);
@@ -23,7 +23,7 @@
 body.light {
   --accent: #0067c0;
   --accent-soft: rgba(0, 103, 192, 0.10);
-  --bg: rgba(243, 243, 243, 0.34);
+  --bg: #f3f3f3;
   --surface: rgba(255, 255, 255, 0.7);
   --surface-hover: rgba(255, 255, 255, 0.92);
   --surface-active: rgba(255, 255, 255, 0.5);

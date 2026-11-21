@@ -67,6 +67,6 @@ npx electron-builder --win --dir --config.win.signAndEditExecutable=false
 ## Tech
 
 - Electron 33, plain HTML/CSS/JS — no framework
-- Fluent design language: Mica-backed frameless window on Windows 11, Segoe UI Variable, custom titlebar overlay, light/dark aware, reduced-motion friendly
+- Fluent design language: frameless window with native titlebar overlay on Windows 11, solid Fluent-styled backdrop (Mica intentionally avoided for rendering reliability on Insider/GPU-varied setups), light/dark aware, reduced-motion friendly
 - UI icons from [Microsoft Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons), OS brand marks (Ubuntu, Fedora, Debian, Arch, Tux) from [Simple Icons](https://simpleicons.org), app logo and Windows mark generated/embedded in `src/renderer/icons/`
 - Backup/restore logic lives in [`src/lib/`](src/lib) and is framework-free, so it can be unit-tested headlessly (see [`test/logic.test.js`](test/logic.test.js))

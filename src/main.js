@@ -17,7 +17,7 @@ let win = null;
 let currentInstallChild = null;
 
 function createWindow() {
-  const isWin11 = process.platform === 'win32';
+  const isWin = process.platform === 'win32';
   win = new BrowserWindow({
     width: 1120,
     height: 760,
@@ -26,11 +26,10 @@ function createWindow() {
     show: false,
     frame: false,
     titleBarStyle: 'hidden',
-    titleBarOverlay: isWin11
-      ? { color: '#00000000', symbolColor: nativeTheme.shouldUseDarkColors ? '#ffffff' : '#1a1a1a', height: 44 }
+    titleBarOverlay: isWin
+      ? { symbolColor: nativeTheme.shouldUseDarkColors ? '#ffffff' : '#1a1a1a', height: 44 }
       : false,
-    backgroundMaterial: isWin11 ? 'mica' : undefined,
-    backgroundColor: isWin11 ? '#00000000' : nativeTheme.shouldUseDarkColors ? '#1c1c1c' : '#f3f3f3',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#202020' : '#f3f3f3',
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
