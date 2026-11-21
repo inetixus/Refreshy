@@ -203,32 +203,43 @@ async function backupInternal(options, progress) {
     notes: []
   };
 
-  let wingetAvailable = false;
   if (options.includeApps) {
     progress.phase = 'apps';
     progress.task = 'Exporting your app list (winget)';
     progress.emit(true);
-    wingetAvailable = await isWingetAvailable();
+    const wingetAvailable = await isWingetAvailable();
     if (wingetAvailable) {
       const wingetFile = path.join(appsDir, 'winget.json');
       try {
         await exportWingetPackages(wingetFile);
-        manifest.apps = readWingetExport(wingetFile);
-        manifest.apps.file = 'apps/winget.json';
+        const wingetData = readWingetExport(wingetFile);
+        manifest.apps = { source: 'winget', packages: wingetData.packages, file: 'apps/winget.json', manual: [] };
       } catch (err) {
         manifest.notes.push(`winget export failed: ${err.message}`);
       }
     }
-    if (!manifest.apps || !(manifest.apps.packages || []).length) {
-      const fallback = await listInstalledAppsFromRegistry().catch(() => []);
-      manifest.apps = {
-        source: 'registry',
-        packages: fallback.map((a) => ({ name: a.name, version: a.version, publisher: a.publisher }))
-      };
-      manifest.apps.file = null;
-      if (fallback.length) {
-        manifest.notes.push('winget was unavailable or empty; app list captured from registry. You will need to pick installers manually on restore for apps without winget ids.');
-      }
+
+    progress.task = 'Scanning every installed program (registry)';
+    progress.emit(true);
+    const registryApps = await listInstalledAppsFromRegistry().catch(() => []);
+    if (!manifest.apps) {
+      manifest.apps = { source: registryApps.length ? 'registry' : 'none', packages: [], manual: [] };
+    }
+    const wingetIds = new Set((manifest.apps.packages || []).map((p) => (p.id || '').toLowerCase()));
+    const wingetNames = new Set(wingetIds);
+    manifest.apps.manual = registryApps
+      .filter((a) => a.name && !wingetNames.has(a.name.toLowerCase()))
+      .map((a) => ({
+        name: a.name,
+        version: a.version || null,
+        publisher: a.publisher || null,
+        aiResolved: false
+      }));
+    if (manifest.apps.manual.length) {
+      manifest.notes.push(`${manifest.apps.manual.length} installed app(s) are not covered by winget (website/sideloaded installs). On restore, Refreshy can find their installers automatically with AI.`);
+    }
+    if (!wingetAvailable && registryApps.length) {
+      manifest.notes.push('winget was unavailable; apps will be resolved by name on restore (auto-match + AI installer search).');
     }
     progress.emit(true);
   }
@@ -308,7 +319,8 @@ function readmeText(manifest) {
     `Created: ${manifest.created}`,
     `Source PC: ${manifest.machine.host} (${manifest.machine.osName || manifest.machine.platform})`,
     `Intended next OS: ${manifest.targetOs ? manifest.targetOs.label : 'not specified'}`,
-    `Apps captured: ${manifest.apps ? (manifest.apps.packages || []).length : 0}`,
+    `Apps captured: ${manifest.apps ? (manifest.apps.packages || []).length : 0} via winget` +
+    (manifest.apps && manifest.apps.manual ? ` + ${manifest.apps.manual.length} not on winget (AI can find their installers)` : ''),
     `Data folders: ${manifest.data.length} (${(manifest.totalBytes / (1024 * 1024 * 1024)).toFixed(2)} GB)`,
     '',
     'To restore: install Refreshy on the new system, choose Restore, and pick this folder.',

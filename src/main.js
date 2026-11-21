@@ -2,6 +2,10 @@
 
 const { app, BrowserWindow, ipcMain, dialog, nativeTheme, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const { wingetSearch, parseWingetSearchTable } = require('./lib/ps');
+const { resolveInstallerForApp } = require('./lib/ai');
+const { safeFileName, silentArgsFor, downloadFile } = require('./lib/installers');
 const { listDrives, isWingetAvailable, getMachineInfo } = require('./lib/ps');
 const { backup: doBackup, cancelBackup } = require('./lib/backup');
 const {
@@ -140,15 +144,99 @@ ipcMain.handle('restore:selectBackup', async () => {
   }
 });
 
-ipcMain.handle('restore:generateInstaller', async (_e, { backupPath, packages }) => {
+ipcMain.handle('restore:generateInstaller', async (_e, { backupPath, packages, installers, manualApps }) => {
   try {
     const chosen = packages.filter((p) => p.selected && p.id);
-    if (!chosen.length) return { ok: false, error: 'No apps selected.' };
-    const file = await writeInstallerScript(backupPath, chosen, process.platform);
-    return { ok: true, file, count: chosen.length };
+    if (!chosen.length && !(installers || []).length) return { ok: false, error: 'No apps selected.' };
+    const fetched = (installers || []).filter((i) => !i.failed);
+    const file = await writeInstallerScript(backupPath, chosen, process.platform, {
+      installers: fetched,
+      manualApps: manualApps || []
+    });
+    return { ok: true, file, count: chosen.length + fetched.length };
   } catch (err) {
     return { ok: false, error: err.message };
   }
+});
+
+function configPath() { return path.join(app.getPath('userData'), 'refreshy-config.json'); }
+function readConfig() {
+  try { return JSON.parse(fs.readFileSync(configPath(), 'utf8')); } catch { return {}; }
+}
+function writeConfig(cfg) {
+  fs.mkdirSync(path.dirname(configPath()), { recursive: true });
+  fs.writeFileSync(configPath(), JSON.stringify(cfg, null, 2));
+}
+
+ipcMain.handle('settings:get', () => {
+  const c = readConfig();
+  return { mistralKeySet: !!c.mistralKey, firecrawlKeySet: !!c.firecrawlKey, ready: !!(c.mistralKey && c.firecrawlKey) };
+});
+
+ipcMain.handle('settings:set', (_e, { mistralKey, firecrawlKey }) => {
+  try {
+    const c = readConfig();
+    if (mistralKey != null) c.mistralKey = String(mistralKey).trim();
+    if (firecrawlKey != null) c.firecrawlKey = String(firecrawlKey).trim();
+    writeConfig(c);
+    return { ok: true, ready: !!(c.mistralKey && c.firecrawlKey) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('winget:matchApps', async (_e, manualApps) => {
+  if (!process || process.platform !== 'win32') return { ok: false, error: 'winget is only available on Windows' };
+  const matches = [];
+  for (const app of manualApps || []) {
+    emitProgress('ai:progress', { phase: 'matching', app: app.name });
+    const out = await wingetSearch(app.name);
+    const rows = parseWingetSearchTable(out);
+    const exact = rows.find((r) => r.name.toLowerCase() === String(app.name).toLowerCase());
+    matches.push({ name: app.name, id: exact ? exact.id : (rows.length ? rows[0].id : null) });
+  }
+  return { ok: true, matches };
+});
+
+ipcMain.handle('ai:resolveInstallers', async (_e, { backupPath, apps }) => {
+  const cfg = readConfig();
+  if (!cfg.mistralKey || !cfg.firecrawlKey) {
+    return { ok: false, error: 'missing-keys' };
+  }
+  const installersDir = path.join(backupPath, 'apps', 'installers');
+  fs.mkdirSync(installersDir, { recursive: true });
+  const resolved = [];
+  for (const app of apps || []) {
+    emitProgress('ai:progress', { phase: 'resolving', app: app.name });
+    try {
+      const r = await resolveInstallerForApp(
+        { mistralKey: cfg.mistralKey, firecrawlKey: cfg.firecrawlKey, model: cfg.mistralModel },
+        app
+      );
+      emitProgress('ai:progress', { phase: 'downloading', app: app.name, url: r.url });
+      const fileName = safeFileName(app, r.url);
+      const dest = path.join(installersDir, fileName);
+      const dl = await downloadFile(r.url, dest, (p) =>
+        emitProgress('ai:progress', { phase: 'download', app: app.name, received: p.received, total: p.total })
+      );
+      let host = null;
+      try { host = new URL(r.url).host; } catch { /* ignore */ }
+      resolved.push({
+        name: app.name,
+        file: fileName,
+        url: r.url,
+        host,
+        bytes: dl.bytes,
+        args: silentArgsFor(r.url),
+        failed: false
+      });
+      emitProgress('ai:progress', { phase: 'resolved', app: app.name, file: fileName, bytes: dl.bytes, url: r.url, host, ok: true });
+    } catch (err) {
+      resolved.push({ name: app.name, failed: true, error: err.message });
+      emitProgress('ai:progress', { phase: 'failed', app: app.name, error: err.message, ok: false });
+    }
+  }
+  return { ok: true, resolved, installers: resolved.filter((r) => !r.failed) };
 });
 
 ipcMain.on('restore:installAll', (_e, { backupPath, packages }) => {

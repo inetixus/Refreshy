@@ -9,7 +9,8 @@ const state = {
   backupPath: null,
   restoreInfo: null,
   platform: 'win32',
-  lastDestination: null
+  lastDestination: null,
+  fetchedInstallers: []
 };
 
 const OS_LIST = [
@@ -84,6 +85,8 @@ $('btnDoneHome2').addEventListener('click', () => { resetToHome(); });
 
 function resetToHome() {
   state.os = null;
+  state.fetchedInstallers = [];
+  state.restoreInfo = null;
   state.destination = null;
   document.querySelectorAll('.os-tile').forEach((t) => t.classList.remove('selected'));
   $('osContinue').disabled = true;
@@ -365,27 +368,13 @@ function buildRestoreReview(info) {
   }
 
   const pkgs = info.packages;
+  state.fetchedInstallers = state.fetchedInstallers || [];
   $('appsCountText').textContent = pkgs.length
     ? `${pkgs.length} packages captured with winget — they install in one automated run`
     : 'No winget package list in this backup';
-  $('manualAppsNote').hidden = !info.manualApps.length;
-  $('manualAppsNote').textContent = info.manualApps.length
-    ? `+ ${info.manualApps.length} more apps were saved without winget ids (e.g. ${info.manualApps.slice(0, 3).map((a) => a.name).join(', ')}). Pick their installers manually — they are listed in manifest.json.`
-    : '';
 
-  const chipWrap = $('packagesList');
-  chipWrap.innerHTML = '';
-  pkgs.forEach((p) => {
-    const c = document.createElement('button');
-    c.className = 'chip' + (p.selected ? ' checked' : '');
-    c.textContent = p.id;
-    c.title = p.version ? `${p.id} ${p.version}` : p.id;
-    c.addEventListener('click', () => {
-      p.selected = !p.selected;
-      c.classList.toggle('checked', p.selected);
-    });
-    chipWrap.appendChild(c);
-  });
+  renderPackageChips();
+  renderManualApps();
   $('btnSelectAllApps').textContent = 'Select all';
   $('btnSelectAllApps').onclick = () => {
     const allOn = pkgs.every((p) => p.selected);
@@ -416,6 +405,178 @@ function buildRestoreReview(info) {
   const totalBytes = info.dataEntries.reduce((a, d) => a + (d.bytes || 0), 0);
   $('dataCountText').textContent = `${info.dataEntries.length} folders · ~${formatBytes(totalBytes)} to copy back`;
 }
+
+function renderPackageChips() {
+  const info = state.restoreInfo;
+  if (!info) return;
+  const chipWrap = $('packagesList');
+  chipWrap.innerHTML = '';
+  info.packages.forEach((p) => {
+    const c = document.createElement('button');
+    c.className = 'chip' + (p.selected ? ' checked' : '');
+    c.textContent = p.id;
+    c.title = (p.version ? `${p.id} ${p.version}` : p.id) + (p.fromManual ? ` — matched from “${p.fromManual}”` : '');
+    c.addEventListener('click', () => {
+      p.selected = !p.selected;
+      c.classList.toggle('checked', p.selected);
+    });
+    chipWrap.appendChild(c);
+  });
+}
+
+function manualStateLabel(m) {
+  if (m.status === 'downloaded') return 'Installer fetched — installs automatically';
+  if (m.status === 'failed') return 'No installer found automatically — download it from the official site';
+  if (m.status === 'working') return 'Looking for an installer…';
+  if (m.matchedId) return 'Matched via winget — installs automatically';
+  return 'Not on winget — pick an action below';
+}
+
+function renderManualApps() {
+  const info = state.restoreInfo;
+  if (!info) return;
+  const manuals = info.manualApps || [];
+  const block = $('manualAppsBlock');
+  block.hidden = manuals.length === 0;
+  if (!manuals.length) return;
+  const pending = manuals.filter((m) => !m.matchedId && m.status === 'pending').length;
+  const working = manuals.filter((m) => m.status === 'working').length;
+  $('manualAppsNote').textContent =
+    `${manuals.length} app(s) were installed from outside winget (website installers, sideloads). ` +
+    `Refreshy can match them against winget by name, and use AI to find the official installers for the rest.`;
+  const chips = $('manualChips');
+  chips.innerHTML = '';
+  manuals.forEach((m) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    const cls = m.status === 'downloaded' ? 'ok'
+      : m.status === 'failed' ? 'fail'
+      : m.status === 'working' ? 'spin'
+      : m.matchedId ? 'merged' : '';
+    const label = m.matchedId || m.name;
+    const ver = m.version ? ` (v${m.version})` : '';
+    chip.innerHTML = `<span class="chip-state ${cls}"></span>${escapeHtml(label)}${escapeHtml(ver)}`;
+    chip.title = manualStateLabel(m) + (m.error ? ` (${m.error})` : '');
+    chips.appendChild(chip);
+  });
+  const fetched = (state.fetchedInstallers || []).length;
+  let hint = working ? `Working on ${working} app(s)… ` : '';
+  if (fetched) hint += `${fetched} installer(s) on the drive. `;
+  if (!working && pending) hint += 'Unresolved apps are listed in apps/Manual-Apps.txt after restore.';
+  $('manualHint').textContent = hint.trim();
+  $('btnMatchApps').disabled = !manuals.some((m) => !m.matchedId && m.status === 'pending');
+  $('btnAiResolve').disabled = pending === 0;
+  $('btnAiResolve').textContent = pending === 0 && !fetched ? 'Find installers with AI' : 'Find remaining installers with AI';
+}
+
+$('btnMatchApps').addEventListener('click', async () => {
+  const info = state.restoreInfo;
+  const pending = info.manualApps.filter((m) => !m.matchedId && m.status === 'pending');
+  pending.forEach((m) => { m.status = 'working'; });
+  renderManualApps();
+  const res = await window.refreshy.matchApps(pending.map((m) => ({ name: m.name })));
+  if (!res.ok) {
+    pending.forEach((m) => { m.status = 'pending'; });
+    renderManualApps();
+    toast(res.error || 'Could not search winget.');
+    return;
+  }
+  let matched = 0;
+  res.matches.forEach((mt) => {
+    const m = info.manifest && info.manualApps.find((x) => x.name === mt.name);
+    if (!m) return;
+    if (mt.id) {
+      m.matchedId = mt.id;
+      mt.confidence = mt.confidence || 'name';
+      matched += 1;
+      if (!info.packages.some((p) => p.id === mt.id)) {
+        info.packages.push({ id: mt.id, version: null, selected: true, fromManual: mt.name });
+      }
+    } else {
+      m.status = 'pending';
+    }
+  });
+  $('appsCountText').textContent = info.packages.length
+    ? `${info.packages.length} apps ready for one automated install run`
+    : 'No apps selected';
+  renderPackageChips();
+  renderManualApps();
+  toast(matched ? `Matched ${matched} app(s) with winget — review the list before installing.` : 'No winget matches found — try the AI installer search.');
+});
+
+let keysResolver = null;
+function askKeys() {
+  return new Promise((resolve) => {
+    keysResolver = resolve;
+    const ov = $('keysOverlay');
+    ov.hidden = false;
+    requestAnimationFrame(() => ov.classList.add('show'));
+    $('keyMistral').focus();
+  });
+}
+
+function closeKeysModal(result) {
+  const ov = $('keysOverlay');
+  ov.classList.remove('show');
+  setTimeout(() => { ov.hidden = true; }, 200);
+  if (keysResolver) keysResolver(result);
+  keysResolver = null;
+}
+
+$('keysCancel').addEventListener('click', () => closeKeysModal(null));
+
+$('keysSave').addEventListener('click', async () => {
+  const mistralKey = $('keyMistral').value.trim() || null;
+  const firecrawlKey = $('keyFirecrawl').value.trim() || null;
+  const res = await window.refreshy.saveSettings({ mistralKey, firecrawlKey });
+  if (!res.ok) {
+    toast(res.error || 'Could not save settings.');
+    return;
+  }
+  $('keyMistral').value = '';
+  $('keyFirecrawl').value = '';
+  closeKeysModal(res);
+});
+
+$('btnAiResolve').addEventListener('click', async () => {
+  const info = state.restoreInfo;
+  let targets = info.manualApps.filter((m) => !m.matchedId && m.status === 'pending');
+  if (!targets.length) return;
+  let st = await window.refreshy.settings();
+  if (!st.ready) {
+    const saved = await askKeys();
+    if (!saved || !saved.ready) return;
+    st = saved;
+  }
+  targets.forEach((m) => { m.status = 'working'; });
+  renderManualApps();
+  const res = await window.refreshy.resolveInstallers(state.backupPath, targets.map((m) => ({
+    name: m.name, version: m.version, publisher: m.publisher
+  })));
+  if (!res.ok) {
+    targets.forEach((m) => { m.status = 'pending'; });
+    renderManualApps();
+    if (res.error === 'missing-keys') return;
+    toast(res.error || 'Installer search failed.');
+    return;
+  }
+  const byName = Object.fromEntries(res.resolved.map((r) => [r.name, r]));
+  state.fetchedInstallers = (state.fetchedInstallers || []).concat(res.installers);
+  targets.forEach((m) => {
+    const r = byName[m.name];
+    if (r && !r.failed) {
+      m.status = 'downloaded';
+      m.version = m.version || r.file;
+    } else {
+      m.status = 'failed';
+      m.error = r ? r.error : 'unknown';
+    }
+  });
+  renderManualApps();
+  toast(res.installers.length
+    ? `Fetched ${res.installers.length}/${targets.length} official installer(s) — they install in the same run as winget apps.`
+    : 'No installers found automatically — those apps are listed for manual download.');
+});
 
 $('btnRestoreAll').addEventListener('click', () => {
   const info = state.restoreInfo;
@@ -452,7 +613,7 @@ function startRestoreFlow(withApps, packages, dataEntries) {
   showView('restorerun');
 
   if (withApps && state.platform !== 'win32') {
-    window.refreshy.generateInstaller(state.backupPath, packages).then((gen) => {
+    window.refreshy.generateInstaller(state.backupPath, packages, state.fetchedInstallers || [], unresolvedManualApps()).then((gen) => {
       if (gen.ok) {
         addLogLine(`Auto-install isn’t possible here. Run the generated installer from a terminal:\n${gen.file}`);
         addLogLine('It installs every selected app in one run.');
@@ -466,12 +627,12 @@ function startRestoreFlow(withApps, packages, dataEntries) {
   }
 
   if (withApps) {
-    window.refreshy.generateInstaller(state.backupPath, packages).then((gen) => {
+    window.refreshy.generateInstaller(state.backupPath, packages, state.fetchedInstallers || [], unresolvedManualApps()).then((gen) => {
       if (!gen.ok) {
         addLogLine('[err] Could not prepare the installer: ' + gen.error);
         return;
       }
-      addLogLine('One-click installer ready: ' + gen.file);
+      addLogLine('One-click installer ready: ' + gen.file + (gen.count ? ` (${gen.count} installs)` : ''));
       window.refreshy.installAll(state.backupPath, packages);
     });
   } else {
@@ -500,13 +661,9 @@ window.refreshy.onInstallProgress((p) => {
 });
 
 function countFailures() {
-  const lines = Array.from(document.querySelectorAll('#restoreLog div'));
-  let ok = 0;
-  let failed = 0;
-  lines.forEach((l) => {
-    if (/Installed OK: (\d+)/.test(l.textContent)) ok = parseInt(RegExp.$1, 10);
-    if (/Failed: (\d+)/.test(l.textContent)) failed = parseInt(RegExp.$1, 10);
-  });
+  const text = document.getElementById('restoreLog').textContent;
+  const ok = (text.match(/installer OK: (\d+)/g) || []).reduce((a, s) => a + parseInt(s.replace(/\D/g, ''), 10), 0);
+  const failed = (text.match(/failed: (\d+)/g) || []).reduce((a, s) => a + parseInt(s.replace(/\D/g, ''), 10), 0);
   return { ok, failed };
 }
 
@@ -589,6 +746,23 @@ function addLogLine(line) {
   el.scrollTop = el.scrollHeight;
   lastLogDate = line;
 }
+
+function unresolvedManualApps() {
+  return ((state.restoreInfo && state.restoreInfo.manualApps) || [])
+    .filter((m) => !m.matchedId && m.status !== 'downloaded')
+    .map((m) => ({ name: m.name, version: m.version, publisher: m.publisher }));
+}
+
+window.refreshy.onAiProgress((p) => {
+  if (p.phase === 'resolving') {
+    $('manualHint').textContent = `Searching the official site for ${p.app}…`;
+  } else if (p.phase === 'downloading') {
+    $('manualHint').textContent = `Downloading installer for ${p.app}…`;
+  } else if (p.phase === 'download' && p.total) {
+    const pct = Math.round((p.received / p.total) * 100);
+    $('manualHint').textContent = `Downloading installer for ${p.app}… ${pct}%`;
+  }
+});
 
 /* ---------- misc ---------- */
 

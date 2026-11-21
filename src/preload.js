@@ -18,7 +18,12 @@ contextBridge.exposeInMainWorld('refreshy', {
   },
   chooseBackup: () => ipcRenderer.invoke('restore:selectBackup'),
   estimateSize: (entries) => ipcRenderer.invoke('restore:estimateSize', entries),
-  generateInstaller: (backupPath, packages) => ipcRenderer.invoke('restore:generateInstaller', { backupPath, packages }),
+  generateInstaller: (backupPath, packages, installers, manualApps) => ipcRenderer.invoke('restore:generateInstaller', { backupPath, packages, installers, manualApps }),
+  settings: () => ipcRenderer.invoke('settings:get'),
+  saveSettings: (pick) => ipcRenderer.invoke('settings:set', pick),
+  matchApps: (manualApps) => ipcRenderer.invoke('winget:matchApps', manualApps),
+  resolveInstallers: (backupPath, apps) => ipcRenderer.invoke('ai:resolveInstallers', { backupPath, apps }),
+  onAiProgress: (cb) => ipcRenderer.on('ai:progress', (_e, p) => cb(p)),
   installAll: (backupPath, packages) => ipcRenderer.send('restore:installAll', { backupPath, packages }),
   cancelInstall: () => ipcRenderer.send('restore:cancelInstall'),
   onInstallProgress: (cb) => {

@@ -176,7 +176,15 @@
           <button class="btn subtle small" id="btnSelectAllApps">Select all</button>
         </div>
         <div class="chip-list" id="packagesList"></div>
-        <p class="manual-note" id="manualAppsNote" hidden></p>
+        <div class="manual-block" id="manualAppsBlock" hidden>
+          <p class="manual-note" id="manualAppsNote" hidden></p>
+          <div class="chip-list manual" id="manualChips"></div>
+          <div class="manual-actions">
+            <button class="btn subtle small" id="btnMatchApps"><i class="icon i-refresh"></i>Auto-match with winget</button>
+            <button class="btn subtle small" id="btnAiResolve"><i class="icon i-rocket"></i>Find installers with AI</button>
+            <span class="manual-hint" id="manualHint"></span>
+          </div>
+        </div>
       </div>
 
       <div class="card">
@@ -220,6 +228,24 @@
       </div>
     </section>
   </main>
+
+  <div class="overlay" id="keysOverlay" hidden>
+    <div class="modal">
+      <h3>Connect installer search</h3>
+      <p class="modal-note">Refreshy uses your own <b>Mistral AI</b> key to reason about official download pages and a <b>Firecrawl</b> key to read them. Keys are stored only on this PC and only sent to these two APIs.</p>
+      <label class="field"><span>Mistral API key</span>
+        <input id="keyMistral" type="password" placeholder="MISTRAL-..." spellcheck="false" />
+      </label>
+      <label class="field"><span>Firecrawl API key</span>
+        <input id="keyFirecrawl" type="password" placeholder="fc-..." spellcheck="false" />
+      </label>
+      <p class="hint">Already saved keys stay as-is if you leave a field empty.</p>
+      <div class="page-actions">
+        <button class="btn subtle" id="keysCancel">Cancel</button>
+        <button class="btn primary" id="keysSave">Save &amp; find installers</button>
+      </div>
+    </div>
+  </div>
 
   <div class="toast" id="toast" hidden></div>
   <script src="app.js"></script>

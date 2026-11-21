@@ -13,6 +13,18 @@ Refreshy is a desktop app (Windows 11 ready, also runs on Linux/macOS) that back
 - **App data**: AppData `Roaming` / `Local` / `LocalLow` by default (or `.config` / `.local/share` on Linux), plus optional personal folders (Desktop, Documents, Pictures, Videos, Music, Downloads). Caches, temp files, crash dumps and package-manager caches are skipped automatically to keep the backup small.
 - Everything lands in one folder on your drive: `Refreshy-<PC-name>-<date>/` with `manifest.json`, `apps/` and `data/`.
 
+#### Apps that aren't on winget (website/sideloaded)
+
+Refreshy records **every** installed program, not just winget ones. On restore it closes the gap in three steps:
+
+1. **Auto-match with winget** — searches winget by app name; matches become regular auto-installs.
+2. **Find installers with AI** — a [Mistral](https://mistral.ai/) model proposes the official download pages for the remaining apps, [Firecrawl](https://firecrawl.dev/) scrapes them, and Mistral picks the direct installer link. Refreshy downloads the installer (`.exe`/`.msi`/`.msix`) onto the backup drive.
+3. **Manual list** — anything still unresolved is printed at the end of the installer log and saved to `apps/Manual-Apps.txt` (name, version, publisher), so only those few need a hand.
+
+The downloaded installers run **in the same single installer run** as the winget packages, with per-installer silent flags (MSI → `msiexec /qn`, NSIS → `/S`, Inno fallback → `/VERYSILENT`).
+
+**API keys**: the AI installer search uses your own keys — set them in-app when prompted. They are stored only on this PC (`%APPDATA%/Refreshy/refreshy-config.json`) and are only ever sent to `api.mistral.ai` and `api.firecrawl.dev`. Without keys, everything else still works and the manual list is generated instead.
+
 ### 2. Reinstall Windows (or Linux)
 Wipe the machine and install the OS you picked. Your external drive keeps the backup.
 

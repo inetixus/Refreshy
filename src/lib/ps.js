@@ -58,6 +58,51 @@ async function exportWingetPackages(outFile) {
   return res;
 }
 
+async function wingetSearch(term) {
+  if (!IS_WIN) return '';
+  try {
+    const res = await run('winget', ['search', term, '--source', 'winget', '--accept-source-agreements'], { timeoutMs: 60000 });
+    return res.stdout;
+  } catch {
+    return '';
+  }
+}
+
+function parseWingetSearchTable(out) {
+  const lines = String(out || '').replace(/\u001b\[[0-9;]*m/g, '').split(/\r?\n/);
+  const headerIdx = lines.findIndex((l) => /^\s*Name\s+Id\s/.test(l));
+  if (headerIdx === -1) return [];
+  const header = lines[headerIdx];
+  const nameCol = header.indexOf('Name');
+  const idCol = header.indexOf('Id');
+  const verCol = header.indexOf('Version');
+  const colSlice = (line, from, toGuess) => {
+    let to = toGuess === -1 ? line.length : toGuess;
+    if (toGuess !== -1 && line[toGuess] !== undefined && !/\s/.test(line[toGuess - 1] || ' ') && !/\s/.test(line[toGuess])) {
+      const m = line.slice(toGuess).match(/\s{2,}/);
+      to = m ? toGuess + m.index : line.length;
+    }
+    return line.slice(from, to).trim();
+  };
+  const results = [];
+  for (let i = headerIdx + 2; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    if (/^[-\s]+$/.test(line.trim())) continue;
+    const name = colSlice(line, nameCol, idCol);
+    let id = verCol === -1 ? line.slice(idCol).trim() : colSlice(line, idCol, verCol);
+    let version = verCol === -1 ? null : line.slice(verCol).trim() || null;
+    const idParts = id.split(/\s+(?=\S)/);
+    if (idParts.length > 1) {
+      version = idParts[idParts.length - 1] || version;
+      id = idParts.slice(0, -1).join(' ');
+    }
+    if (!name || !id) continue;
+    results.push({ name, id, version: version || null });
+  }
+  return results;
+}
+
 function listInstalledAppsFromRegistry() {
   return runPowerShell(`
     $keys = @(
@@ -186,6 +231,8 @@ module.exports = {
   run,
   runPowerShell,
   isWingetAvailable,
+  wingetSearch,
+  parseWingetSearchTable,
   exportWingetPackages,
   listInstalledAppsFromRegistry,
   listDrives,

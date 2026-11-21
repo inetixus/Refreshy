@@ -7,6 +7,16 @@ const { spawn } = require('child_process');
 const { IS_WIN, getMachineInfo } = require('./ps');
 const { resolveBase, dataItems, linuxDistroFor } = require('./paths');
 
+const GOOD_EXIT = '$p.ExitCode -eq 0 -or $p.ExitCode -eq 1641 -or $p.ExitCode -eq 3010';
+
+function psq(s) {
+  return `'${String(s).replace(/'/g, "''")}'`;
+}
+
+function sanitizeWingetId(id) {
+  return String(id).replace(/[^A-Za-z0-9._-]/g, '');
+}
+
 async function readBackup(backupPath) {
   const manifestPath = path.join(backupPath, 'manifest.json');
   const raw = await fsp.readFile(manifestPath, 'utf8');
@@ -30,9 +40,20 @@ async function readBackup(backupPath) {
       }
     } catch { /* ignore malformed winget file */ }
   }
-  const manualApps = ((manifest.apps && manifest.apps.packages) || [])
+  const manualApps = ((manifest.apps && (manifest.apps.manual || manifest.apps.packages)) || [])
     .filter((p) => !p.id)
-    .map((p) => ({ id: null, name: p.name, version: p.version || null, publisher: p.publisher || null, selected: false }));
+    .map((p) => ({
+      name: p.name,
+      version: p.version || null,
+      publisher: p.publisher || null,
+      matchedId: null,
+      status: p.installerFile ? 'downloaded' : 'pending'
+    }));
+  const installerFiles = new Set(
+    (function listInstallers(dir) {
+      try { return fs.readdirSync(dir); } catch { return []; }
+    })(path.join(backupPath, 'apps', 'installers'))
+  );
   const dataEntries = (manifest.data || []).map((d) => ({
     ...d,
     fullPath: path.join(backupPath, d.folder),
@@ -41,51 +62,127 @@ async function readBackup(backupPath) {
     targetBase: d.base,
     bytes: d.bytes || 0
   }));
-  return { backupPath, manifest, packages, manualApps, dataEntries };
+  return { backupPath, manifest, packages, manualApps, dataEntries, installerFiles };
 }
 
-function sanitizeWingetId(id) {
-  return String(id).replace(/[^A-Za-z0-9._-]/g, '');
-}
-
-function wingetInstallAllScript(packages, backupPath) {
+function wingetInstallAllScript(packages, backupPath, installers = [], manualApps = []) {
   const ids = packages.map((p) => sanitizeWingetId(p.id)).filter(Boolean);
-  return [
+  const L = [];
+  L.push(
     '# Refreshy one-click installer',
-    '# Installs every app that was captured on the old PC, in one run.',
+    '# Installs every app captured on the old PC, in one run.',
+    `# Section 1: ${ids.length} app(s) via winget.`,
+    installers.length
+      ? `# Section 2: ${installers.length} installer(s) Refreshy fetched automatically for non-winget apps.`
+      : '# Section 2: skipped (no fetched installers).',
+    manualApps.length
+      ? `# ${manualApps.length} app(s) could not be resolved automatically - listed at the end and in apps/Manual-Apps.txt.`
+      : '# No manual installs needed - everything is automated.',
     'param()',
-    '$ErrorActionPreference = "Continue"',
-    '$ProgressPreference = "SilentlyContinue"',
-    `$backupRoot = "${backupPath.replace(/'/g, "''")}"`,
-    '$log = Join-Path $backupRoot "apps\\install-log.txt"',
+    "$ErrorActionPreference = 'Continue'",
+    "$ProgressPreference = 'SilentlyContinue'",
+    "$installersDir = Join-Path $PSScriptRoot 'installers'",
+    "$log = Join-Path $PSScriptRoot 'install-log.txt'",
     'Start-Transcript -Path $log -Append | Out-Null',
     '',
-    'if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {',
-    '  Write-Host "winget is missing. Install \\"App Installer\\" from the Microsoft Store, then re-run this script." -ForegroundColor Red',
-    '  Stop-Transcript | Out-Null',
-    '  exit 1',
-    '}',
+    "$hasWinget = $null -ne (Get-Command winget -ErrorAction SilentlyContinue)",
+    'if (-not $hasWinget) {',
+    "  Write-Host 'winget is missing. Install App Installer from the Microsoft Store, then re-run this script.' -ForegroundColor Red",
+    '}'
+  );
+  if (ids.length) {
+    L.push('', '$packages = @(');
+    for (const id of ids) L.push(`  ${psq(id)}`);
+    L.push(
+      ')',
+      '',
+      '$wingetOk = @(); $wingetFailed = @()',
+      'if ($hasWinget) {',
+      '  foreach ($id in $packages) {',
+      '    Write-Host "`n=== Installing $id ===" -ForegroundColor Cyan',
+      '    $out = winget install -e --id $id --accept-source-agreements --accept-package-agreements --silent 2>&1',
+      '    $txt = ($out | Out-String)',
+      '    $out | ForEach-Object { Write-Host $_ }',
+      '    if ($LASTEXITCODE -eq 0 -or $txt -match "already installed") {',
+      '      $wingetOk = $wingetOk + $id',
+      '    } else {',
+      '      $wingetFailed = $wingetFailed + $id',
+      '    }',
+      '  }',
+      '} else {',
+      "  Write-Host 'Skipping section 1 (no winget).'",
+      '}'
+    );
+  }
+  L.push('', '$exeOk = @(); $exeFailed = @()');
+  if (installers.length) {
+    L.push(`Write-Host "**** Section 2: ${installers.length} fetched installer(s) ****" -ForegroundColor White`);
+    for (const inst of installers) {
+      const file = String(inst.file).replace(/[^\w.-]+/g, '');
+      const name = String(inst.name).replace(/'/g, "''");
+      const args = String(inst.args || '/S').replace(/'/g, "''");
+      L.push(
+        `Write-Host "=== Installing ${name} ===" -ForegroundColor Cyan`,
+        `$exe = Join-Path $installersDir ${psq(file)}`,
+        'if (Test-Path $exe) {'
+      );
+      if (/\.msi$/i.test(file)) {
+        L.push("  $p = Start-Process msiexec.exe -ArgumentList '/i', $exe, '/qn', '/norestart' -Wait -PassThru");
+      } else {
+        L.push(
+          `  $p = Start-Process $exe -ArgumentList ${psq(args)} -Wait -PassThru`,
+          `  if (-not (${GOOD_EXIT})) {`,
+          "    $fb = if (" + psq(args) + " -eq '/S') { '/VERYSILENT /NORESTART' } else { '/S' }",
+          '    $p = Start-Process $exe -ArgumentList $fb -Wait -PassThru',
+          '  }'
+        );
+      }
+      L.push(
+        `  if (${GOOD_EXIT}) { $exeOk = $exeOk + ${psq(inst.name)} } else { $exeFailed = $exeFailed + ${psq(inst.name)} }`,
+        '} else {',
+        `  $exeFailed = $exeFailed + ${psq(inst.name)}`,
+        '}'
+      );
+    }
+  }
+  if (manualApps.length) {
+    L.push(
+      '',
+      "Write-Host '**** Apps that need a manual installer ****' -ForegroundColor Yellow",
+      "Write-Host 'Find them on their official websites (listed in apps/Manual-Apps.txt):' -ForegroundColor Yellow"
+    );
+    for (const a of manualApps) {
+      const label = a.version ? `${a.name} (v${a.version})` : a.name;
+      L.push(`Write-Host ${psq('  - ' + label)} -ForegroundColor Yellow`);
+    }
+  }
+  L.push(
     '',
-    '$packages = @(',
-    ...ids.map((id) => `  "${id}"`),
-    ')',
-    '',
-    '$ok = @(); $failed = @()',
-    'foreach ($id in $packages) {',
-    '  Write-Host "`n=== Installing $id ===" -ForegroundColor Cyan',
-    '  winget install -e --id $id --accept-source-agreements --accept-package-agreements --silent',
-    '  if ($LASTEXITCODE -eq 0) { $ok += $id } else { $failed += $id }',
-    '}',
-    '',
-    'Write-Host "`n================= SUMMARY =================" -ForegroundColor White',
-    "Write-Host ('Installed OK: ' + $ok.Count)",
-    "Write-Host ('Failed: ' + $failed.Count)",
-    'if ($failed.Count -gt 0) { $failed | ForEach-Object { Write-Host ("  - " + $_) -ForegroundColor Yellow } }',
+    'Write-Host "**** SUMMARY ****" -ForegroundColor White',
+    "Write-Host ('winget - installer OK: ' + $wingetOk.Count)",
+    "Write-Host ('winget - failed: ' + $wingetFailed.Count)",
+    '$wingetFailed | ForEach-Object { Write-Host ("  - " + $_) -ForegroundColor Yellow }',
+    "Write-Host ('fetched installers - installer OK: ' + $exeOk.Count)",
+    "Write-Host ('fetched installers - failed: ' + $exeFailed.Count)",
+    '$exeFailed | ForEach-Object { Write-Host ("  - " + $_) -ForegroundColor Yellow }',
     'Stop-Transcript | Out-Null'
-  ].join('\n');
+  );
+  return L.join('\n') + '\n';
 }
 
-function linuxShellScript(packages, backupPath, distro) {
+function manualAppsText(manualApps) {
+  return [
+    'Apps not covered by winget and not resolvable automatically',
+    '==========================================================',
+    '',
+    'Find installers on the official websites (publisher search) and run them by hand.',
+    '',
+    ...manualApps.map((a) => `- ${a.name}${a.version ? ` (v${a.version})` : ''}${a.publisher ? ` - ${a.publisher}` : ''}`),
+    ''
+  ].join('\n') + '\n';
+}
+
+function linuxShellScript(packages, backupPath, distro, installers = []) {
   const flatpakIds = packages.map((p) => p.id);
   return [
     '#!/usr/bin/env bash',
@@ -104,23 +201,32 @@ function linuxShellScript(packages, backupPath, distro) {
     'else',
     '  echo "flatpak not found. Install it first: see https://flatpak.org/setup/"',
     'fi',
+    ...installers.reduce((acc, inst) => acc.concat([
+      `echo "--- Fetched Windows installer: ${String(inst.file).replace(/["\\\\]/g, '')} (for ${String(inst.name).replace(/"/g, '')})"`,
+      'echo "    Windows installers do not run on Linux - copy it somewhere safe or try Wine."'
+    ]), []),
     'echo "Done. Review the output above for any app that needs a different package name."'
   ].join('\n');
 }
 
-async function writeInstallerScript(backupPath, packages, targetPlatform) {
+async function writeInstallerScript(backupPath, packages, targetPlatform, opts = {}) {
   const appsDir = path.join(backupPath, 'apps');
   await fsp.mkdir(appsDir, { recursive: true });
   let file;
   let content;
+  const installers = opts.installers || [];
+  const manualApps = opts.manualApps || [];
   if (targetPlatform === 'win32') {
     file = path.join(appsDir, 'Refreshy-Installer.ps1');
-    content = wingetInstallAllScript(packages, backupPath);
+    content = wingetInstallAllScript(packages, backupPath, installers, manualApps);
   } else {
     file = path.join(appsDir, 'Refreshy-Installer.sh');
-    content = linuxShellScript(packages, backupPath, linuxDistroFor(null));
+    content = linuxShellScript(packages, backupPath, linuxDistroFor(null), installers);
   }
   await fsp.writeFile(file, content, 'utf8');
+  if (manualApps.length && targetPlatform === 'win32') {
+    await fsp.writeFile(path.join(appsDir, 'Manual-Apps.txt'), manualAppsText(manualApps), 'utf8');
+  }
   return file;
 }
 
@@ -139,12 +245,12 @@ function startInstaller(backupPath, packages, onLine, onDone) {
   let buffer = '';
   child.stdout.on('data', (chunk) => {
     buffer += chunk;
-    const lines = buffer.split(/\r?\n|\r/);
+    const lines = buffer.split(/\r?\\n|\r/);
     buffer = lines.pop() || '';
     lines.forEach((l) => l.trim() && onLine(l));
   });
   child.stderr.on('data', (chunk) => {
-    chunk.split(/\r?\n|\r/).forEach((l) => l.trim() && onLine('[err] ' + l));
+    chunk.split(/\r?\\n|\r/).forEach((l) => l.trim() && onLine('[err] ' + l));
   });
   child.on('close', (code) => onDone(code));
   child.on('error', (err) => {
@@ -226,8 +332,10 @@ async function currentOsLabel() {
 
 module.exports = {
   readBackup,
+  psq,
   sanitizeWingetId,
   wingetInstallAllScript,
+  manualAppsText,
   linuxShellScript,
   writeInstallerScript,
   startInstaller,
