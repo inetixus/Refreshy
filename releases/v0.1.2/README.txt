@@ -7,8 +7,10 @@ HOW TO RUN — 4 steps, no commands except one copy line:
    - Refreshy-v0.1.2-win-x64.zip.part01
    (use the "Raw" / download button on each file's page on GitHub)
 
-2. Rejoin them: open Command Prompt in that folder and run:
-   copy /b Refreshy-v0.1.2-win-x64.zip.part00+Refreshy-v0.1.2-win-x64.zip.part01 Refreshy-v0.1.2-win-x64.zip
+2. Rejoin them. In PowerShell or Command Prompt, from that folder run:
+   cmd /c copy /b Refreshy-v0.1.2-win-x64.zip.part00+Refreshy-v0.1.2-win-x64.zip.part01 Refreshy-v0.1.2-win-x64.zip
+
+   (In cmd.exe you can drop the "cmd /c " prefix.)
 
 3. Right-click Refreshy-v0.1.2-win-x64.zip → Extract All.
 
